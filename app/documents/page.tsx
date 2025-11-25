@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { supabase } from '@/lib/supabase/client'
-import { Navigation } from '@/components/navigation'
+import { Sidebar } from '@/components/sidebar'
 import { UploadStatement } from '@/components/upload-statement'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -42,19 +42,7 @@ export default function DocumentsPage() {
   const [pdfError, setPdfError] = useState<string | null>(null)
   const router = useRouter()
 
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        router.push('/login')
-        return
-      }
-      loadDocuments()
-    }
-    checkUser()
-  }, [router])
-
-  const loadDocuments = async () => {
+  const loadDocuments = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('documents')
@@ -68,7 +56,28 @@ export default function DocumentsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!mounted) return
+      
+      if (!user) {
+        router.push('/login')
+        return
+      }
+      loadDocuments()
+    }
+    checkUser()
+
+    return () => {
+      mounted = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -156,9 +165,9 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-blue-50">
-      <Navigation />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-blue-50 flex">
+      <Sidebar />
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8 ml-16">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">Bank Statements</h1>
           <p className="text-muted-foreground">

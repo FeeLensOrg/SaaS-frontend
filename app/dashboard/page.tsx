@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
-import { Navigation } from '@/components/navigation'
+import { Sidebar } from '@/components/sidebar'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, FileText, DollarSign, CheckCircle2, Upload, BarChart3 } from 'lucide-react'
@@ -15,8 +15,12 @@ export default function DashboardPage() {
   const router = useRouter()
 
   useEffect(() => {
+    let mounted = true
+
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!mounted) return
       
       if (!user) {
         router.push('/login')
@@ -30,17 +34,22 @@ export default function DashboardPage() {
     checkUser()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return
+      
       if (!session) {
         router.push('/login')
       } else {
         setUser(session.user)
+        setLoading(false)
       }
     })
 
     return () => {
+      mounted = false
       subscription.unsubscribe()
     }
-  }, [router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount
 
   if (loading) {
     return (
@@ -54,11 +63,11 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-blue-50">
-      <Navigation />
+    <div className="min-h-screen bg-blue-50 flex">
+      <Sidebar />
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8 ml-16">
         {/* Welcome Section */}
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-foreground mb-2">

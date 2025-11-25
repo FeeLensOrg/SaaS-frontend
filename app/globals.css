@@ -69,6 +69,16 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+  
+  /* Performance optimizations */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Reduce repaints on scroll */
+  html {
+    scroll-behavior: smooth;
+  }
 }
 
 /* React-PDF styles */
