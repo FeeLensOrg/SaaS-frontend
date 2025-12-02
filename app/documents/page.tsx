@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle } from 'lucide-react'
+import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle, BarChart3, AlertTriangle, Trash2 } from 'lucide-react'
 
 // Import dynamique de react-pdf pour éviter les problèmes SSR
 const PDFViewer = dynamic(
@@ -33,6 +33,19 @@ interface BankDocument {
   upload_date: string
   processed_at?: string
   error_message?: string
+  analysis_results?: {
+    total_transactions: number
+    calculation_errors: number
+    error_rate: number
+    errors_details: Array<{
+      service: string
+      volume: number
+      unit_price: number
+      expected_charge: number
+      actual_charge: number
+      difference: number
+    }>
+  }
 }
 
 export default function DocumentsPage() {
@@ -46,7 +59,7 @@ export default function DocumentsPage() {
     try {
       const { data, error } = await supabase
         .from('documents')
-        .select('*')
+        .select('*, analysis_results')
         .order('upload_date', { ascending: false })
 
       if (error) throw error
@@ -79,6 +92,19 @@ export default function DocumentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Only run once on mount
 
+  // Poll for status updates when there are documents being processed
+  useEffect(() => {
+    const hasProcessingDocs = documents.some(doc => doc.status === 'pending' || doc.status === 'processing')
+    
+    if (!hasProcessingDocs) return
+
+    const interval = setInterval(() => {
+      loadDocuments()
+    }, 3000) // Refresh every 3 seconds
+
+    return () => clearInterval(interval)
+  }, [documents, loadDocuments])
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'done':
@@ -104,6 +130,41 @@ export default function DocumentsPage() {
         return 'Pending'
     }
   }
+
+  const deleteDocument = useCallback(async (docId: string, fileUrl: string) => {
+    if (!confirm('Are you sure you want to delete this statement? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      // Get session for authentication
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('User not authenticated')
+      }
+
+      // Call backend API to delete document
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const response = await fetch(`${backendUrl}/documents/${docId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(errorData.detail || `Failed to delete document: ${response.statusText}`)
+      }
+
+      // Reload documents list
+      loadDocuments()
+    } catch (error: any) {
+      console.error('Error deleting document:', error)
+      alert(error.message || 'Failed to delete document. Please try again.')
+    }
+  }, [loadDocuments])
 
   const openPdfViewer = async (doc: BankDocument) => {
     setPdfError(null)
@@ -175,15 +236,12 @@ export default function DocumentsPage() {
           </p>
         </div>
 
-        <Tabs defaultValue="upload" className="space-y-6">
+        <Tabs defaultValue="list" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="upload">Upload</TabsTrigger>
             <TabsTrigger value="list">My Statements</TabsTrigger>
+            <TabsTrigger value="analysis">Analysis</TabsTrigger>
+            <TabsTrigger value="upload">Upload</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="upload" className="space-y-4">
-            <UploadStatement onUploadSuccess={loadDocuments} />
-          </TabsContent>
 
           <TabsContent value="list" className="space-y-4">
             {documents.length === 0 ? (
@@ -213,31 +271,186 @@ export default function DocumentsPage() {
                             </span>
                           </CardDescription>
                         </div>
-                        <div className="flex items-center space-x-1">
-                          {getStatusIcon(doc.status)}
-                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">
-                          {getStatusText(doc.status)}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openPdfViewer(doc)}
-                          className="h-8"
-                        >
-                          <Eye className="h-3 w-3 mr-1" />
-                          View
-                        </Button>
+                        <div className="flex items-center space-x-2">
+                          {getStatusIcon(doc.status)}
+                          <span className="text-xs text-muted-foreground">
+                            {getStatusText(doc.status)}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openPdfViewer(doc)}
+                            className="h-8"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => deleteDocument(doc.id, doc.file_url)}
+                            className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="analysis" className="space-y-4">
+            {documents.filter(doc => doc.status === 'done' && doc.analysis_results).length === 0 ? (
+              <Card>
+                <CardContent className="p-12 text-center">
+                  <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <p className="text-lg font-medium text-gray-900 mb-2">No analysis available</p>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Upload and process a statement to see analysis results
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-6">
+                {documents
+                  .filter(doc => doc.status === 'done' && doc.analysis_results)
+                  .map((doc) => {
+                    let analysis = null
+                    try {
+                      if (doc.analysis_results) {
+                        analysis = typeof doc.analysis_results === 'string' 
+                          ? JSON.parse(doc.analysis_results) 
+                          : doc.analysis_results
+                      }
+                    } catch (e) {
+                      console.error('Error parsing analysis_results:', e)
+                      analysis = null
+                    }
+                    
+                    if (!analysis) return null
+                    
+                    return (
+                      <Card key={doc.id} className="overflow-hidden">
+                        <CardHeader className="bg-blue-50 border-b">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <CardTitle className="text-lg mb-1">{doc.file_name}</CardTitle>
+                              <CardDescription>
+                                Processed on {doc.processed_at 
+                                  ? new Date(doc.processed_at).toLocaleString() 
+                                  : 'Unknown date'}
+                              </CardDescription>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <CheckCircle2 className="h-5 w-5 text-green-600" />
+                              <span className="text-sm font-medium text-green-700">Analysis Complete</span>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="p-6">
+                          {/* Summary Statistics */}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="text-sm text-muted-foreground mb-1">Total Transactions</div>
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {analysis?.total_transactions || 0}
+                                </div>
+                              </CardContent>
+                            </Card>
+                            <Card className={analysis?.calculation_errors > 0 ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}>
+                              <CardContent className="p-4">
+                                <div className="text-sm text-muted-foreground mb-1">Calculation Errors</div>
+                                <div className={`text-2xl font-bold ${analysis?.calculation_errors > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                  {analysis?.calculation_errors || 0}
+                                </div>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="text-sm text-muted-foreground mb-1">Error Rate</div>
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {analysis?.error_rate || 0}%
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
+
+                          {/* Errors Details Table */}
+                          {analysis?.errors_details && analysis.errors_details.length > 0 ? (
+                            <div className="space-y-4">
+                              <div className="flex items-center space-x-2">
+                                <AlertTriangle className="h-5 w-5 text-red-600" />
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                  Transactions with Calculation Errors ({analysis.errors_details.length})
+                                </h3>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full border-collapse">
+                                  <thead>
+                                    <tr className="bg-gray-50 border-b">
+                                      <th className="text-left p-3 text-sm font-semibold text-gray-700">Service</th>
+                                      <th className="text-right p-3 text-sm font-semibold text-gray-700">Volume</th>
+                                      <th className="text-right p-3 text-sm font-semibold text-gray-700">Unit Price</th>
+                                      <th className="text-right p-3 text-sm font-semibold text-gray-700">Expected Charge</th>
+                                      <th className="text-right p-3 text-sm font-semibold text-gray-700">Actual Charge</th>
+                                      <th className="text-right p-3 text-sm font-semibold text-red-600">Difference</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {analysis.errors_details.map((error: any, index: number) => (
+                                      <tr key={index} className="border-b hover:bg-gray-50">
+                                        <td className="p-3 text-sm text-gray-900">{error.service}</td>
+                                        <td className="p-3 text-sm text-right text-gray-700">
+                                          {error.volume?.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-3 text-sm text-right text-gray-700">
+                                          ${error.unit_price?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                                        </td>
+                                        <td className="p-3 text-sm text-right text-gray-700">
+                                          ${error.expected_charge?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-3 text-sm text-right text-gray-700">
+                                          ${error.actual_charge?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-3 text-sm text-right font-semibold text-red-600">
+                                          ${error.difference?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-center py-8">
+                              <CheckCircle2 className="h-12 w-12 text-green-600 mx-auto mb-4" />
+                              <p className="text-lg font-medium text-gray-900 mb-2">No calculation errors found</p>
+                              <p className="text-sm text-gray-500">
+                                All transactions have correct calculations (Volume × Unit Price = Service Charge)
+                              </p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )
+                  })
+                  .filter(Boolean)}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="upload" className="space-y-4">
+            <UploadStatement onUploadSuccess={loadDocuments} />
           </TabsContent>
         </Tabs>
       </main>

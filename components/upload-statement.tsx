@@ -20,9 +20,12 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
     const file = acceptedFiles[0]
     if (!file) return
 
-    // Vérifier que c'est un PDF
-    if (file.type !== 'application/pdf') {
-      setError('Please upload a PDF file')
+    // Vérifier que c'est un PDF ou CSV
+    const isPdf = file.type === 'application/pdf'
+    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv')
+    
+    if (!isPdf && !isCsv) {
+      setError('Please upload a PDF or CSV file')
       return
     }
 
@@ -45,14 +48,27 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
 
       // Générer un ID unique pour le document
       const documentId = crypto.randomUUID()
-      const filePath = `${user.id}/${documentId}.pdf`
+      const fileExtension = file.name.toLowerCase().endsWith('.csv') ? '.csv' : '.pdf'
+      const filePath = `${user.id}/${documentId}${fileExtension}`
 
+      // Déterminer le content-type correct
+      let contentType = file.type
+      if (!contentType || contentType === '') {
+        // Si le navigateur ne détecte pas le type, le déterminer manuellement
+        if (file.name.toLowerCase().endsWith('.csv')) {
+          contentType = 'text/csv'
+        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+          contentType = 'application/pdf'
+        }
+      }
+      
       // Upload vers Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('bank-statements')
         .upload(filePath, file, {
           cacheControl: '3600',
-          upsert: false
+          upsert: false,
+          contentType: contentType || undefined
         })
 
       if (uploadError) throw uploadError
@@ -73,6 +89,31 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
         })
 
       if (dbError) throw dbError
+
+      // Trigger async analysis via backend API
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token) {
+          const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+          // Fire and forget - don't wait for response
+          fetch(`${backendUrl}/analyze`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              document_id: documentId
+            })
+          }).catch(error => {
+            console.error('Error triggering analysis:', error)
+            // Don't fail the upload if analysis trigger fails
+          })
+        }
+      } catch (error) {
+        console.error('Error triggering analysis:', error)
+        // Don't fail the upload if analysis trigger fails
+      }
 
       setSuccess(true)
       
@@ -100,7 +141,8 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/pdf': ['.pdf']
+      'application/pdf': ['.pdf'],
+      'text/csv': ['.csv']
     },
     maxFiles: 1,
     disabled: uploading
@@ -147,7 +189,7 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
                 </p>
               </div>
               <p className="text-xs text-gray-400">
-                PDF files only, max 50MB
+                PDF or CSV files only, max 50MB
               </p>
             </div>
           )}
