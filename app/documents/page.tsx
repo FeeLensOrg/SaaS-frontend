@@ -10,11 +10,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle, BarChart3, AlertTriangle, Trash2, Play } from 'lucide-react'
+import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle, BarChart3, AlertTriangle, Trash2, Play, ExternalLink, Download } from 'lucide-react'
 
 // Import dynamique de react-pdf pour éviter les problèmes SSR
 const PDFViewer = dynamic(
   () => import('@/components/pdf-viewer'),
+  { 
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+)
+
+const CSVViewer = dynamic(
+  () => import('@/components/csv-viewer').then(mod => ({ default: mod.CSVViewer })),
   { 
     ssr: false,
     loading: () => (
@@ -262,7 +274,7 @@ export default function DocumentsPage() {
     }
   }, [loadDocuments])
 
-  const openPdfViewer = async (doc: BankDocument) => {
+  const openFileViewer = async (doc: BankDocument) => {
     setPdfError(null)
     
     // Si file_url est un chemin (commence par user_id/), générer une URL signée via le backend
@@ -311,6 +323,14 @@ export default function DocumentsPage() {
       ...doc,
       file_url: fileUrl
     })
+  }
+
+  const isCSVFile = (fileName: string): boolean => {
+    return fileName.toLowerCase().endsWith('.csv')
+  }
+
+  const isPDFFile = (fileName: string): boolean => {
+    return fileName.toLowerCase().endsWith('.pdf')
   }
 
   if (loading) {
@@ -410,15 +430,15 @@ export default function DocumentsPage() {
                             )}
                           </Button>
                         )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openPdfViewer(doc)}
-                          className="h-8"
-                        >
-                          <Eye className="h-3 w-3 mr-1" />
-                          View
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openFileViewer(doc)}
+                            className="h-8"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -582,39 +602,86 @@ export default function DocumentsPage() {
         </Tabs>
       </main>
 
-      {/* PDF Viewer Dialog */}
+      {/* File Viewer Dialog */}
       <Dialog open={!!selectedDoc} onOpenChange={() => {
         setSelectedDoc(null)
         setPdfError(null)
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle>{selectedDoc?.file_name}</DialogTitle>
-          </DialogHeader>
-          {selectedDoc && (
-            <>
-              {pdfError ? (
-                <div className="p-8 text-center space-y-4">
-                  <XCircle className="h-12 w-12 text-red-500 mx-auto" />
-                  <p className="text-red-600 font-medium">{pdfError}</p>
-                  <div className="text-sm text-muted-foreground space-y-2">
-                    <p className="font-medium">To fix this issue:</p>
-                    <ol className="list-decimal list-inside space-y-1 text-left max-w-md mx-auto">
-                      <li>Go to your Supabase Dashboard</li>
-                      <li>Navigate to <strong>Storage</strong> in the left menu</li>
-                      <li>Click <strong>New bucket</strong></li>
-                      <li>Name it: <code className="bg-gray-100 px-1 rounded">bank-statements</code></li>
-                      <li>Make sure <strong>Public bucket</strong> is <strong>DISABLED</strong> (private)</li>
-                      <li>Click <strong>Create bucket</strong></li>
-                    </ol>
-                    <p className="pt-2">See <code className="bg-gray-100 px-1 rounded">SUPABASE_SETUP.md</code> for detailed instructions.</p>
-                  </div>
+        <DialogContent className={`max-h-[90vh] flex flex-col p-0 ${
+          selectedDoc && isCSVFile(selectedDoc.file_name) ? 'max-w-6xl' : 'max-w-4xl'
+        }`}>
+          {/* Fixed Header */}
+          <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b bg-background relative">
+            <div className="flex items-center justify-between pr-8">
+              <DialogTitle className="pr-4 truncate">{selectedDoc?.file_name}</DialogTitle>
+              {selectedDoc && !pdfError && (
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedDoc) {
+                        window.open(selectedDoc.file_url, '_blank')
+                      }
+                    }}
+                    className="h-8"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Open in new tab
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedDoc) {
+                        const link = document.createElement('a')
+                        link.href = selectedDoc.file_url
+                        link.download = selectedDoc.file_name
+                        link.click()
+                      }
+                    }}
+                    className="h-8"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Download
+                  </Button>
                 </div>
-              ) : (
-                <PDFViewer fileUrl={selectedDoc.file_url} fileName={selectedDoc.file_name} />
               )}
-            </>
-          )}
+            </div>
+          </div>
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-auto px-6 py-4">
+            {selectedDoc && (
+              <>
+                {pdfError ? (
+                  <div className="p-8 text-center space-y-4">
+                    <XCircle className="h-12 w-12 text-red-500 mx-auto" />
+                    <p className="text-red-600 font-medium">{pdfError}</p>
+                    <div className="text-sm text-muted-foreground space-y-2">
+                      <p className="font-medium">To fix this issue:</p>
+                      <ol className="list-decimal list-inside space-y-1 text-left max-w-md mx-auto">
+                        <li>Go to your Supabase Dashboard</li>
+                        <li>Navigate to <strong>Storage</strong> in the left menu</li>
+                        <li>Click <strong>New bucket</strong></li>
+                        <li>Name it: <code className="bg-gray-100 px-1 rounded">bank-statements</code></li>
+                        <li>Make sure <strong>Public bucket</strong> is <strong>DISABLED</strong> (private)</li>
+                        <li>Click <strong>Create bucket</strong></li>
+                      </ol>
+                      <p className="pt-2">See <code className="bg-gray-100 px-1 rounded">SUPABASE_SETUP.md</code> for detailed instructions.</p>
+                    </div>
+                  </div>
+                ) : isCSVFile(selectedDoc.file_name) ? (
+                  <CSVViewer fileUrl={selectedDoc.file_url} fileName={selectedDoc.file_name} />
+                ) : isPDFFile(selectedDoc.file_name) ? (
+                  <PDFViewer fileUrl={selectedDoc.file_url} fileName={selectedDoc.file_name} />
+                ) : (
+                  <div className="p-8 text-center">
+                    <p className="text-muted-foreground">Unsupported file type. Please download the file to view it.</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
