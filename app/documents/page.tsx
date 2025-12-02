@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle, BarChart3, AlertTriangle, Trash2 } from 'lucide-react'
+import { Loader2, FileText, Eye, Calendar, CheckCircle2, Clock, XCircle, BarChart3, AlertTriangle, Trash2, Play } from 'lucide-react'
 
 // Import dynamique de react-pdf pour éviter les problèmes SSR
 const PDFViewer = dynamic(
@@ -53,6 +53,7 @@ export default function DocumentsPage() {
   const [selectedDoc, setSelectedDoc] = useState<BankDocument | null>(null)
   const [loading, setLoading] = useState(true)
   const [pdfError, setPdfError] = useState<string | null>(null)
+  const [analyzingDocId, setAnalyzingDocId] = useState<string | null>(null)
   const router = useRouter()
 
   const loadDocuments = useCallback(async () => {
@@ -108,13 +109,13 @@ export default function DocumentsPage() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'done':
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />
+        return <CheckCircle2 className="h-4 w-4 text-green-600 transition-colors duration-200" />
       case 'processing':
-        return <Clock className="h-4 w-4 text-blue-600 animate-spin" />
+        return <Clock className="h-4 w-4 text-blue-600 animate-spin transition-colors duration-200" />
       case 'error':
-        return <XCircle className="h-4 w-4 text-red-600" />
+        return <XCircle className="h-4 w-4 text-red-600 transition-colors duration-200" />
       default:
-        return <Clock className="h-4 w-4 text-gray-400" />
+        return <Clock className="h-4 w-4 text-gray-400 transition-colors duration-200" />
     }
   }
 
@@ -130,6 +131,101 @@ export default function DocumentsPage() {
         return 'Pending'
     }
   }
+
+  const analyzeDocument = useCallback(async (docId: string) => {
+    if (analyzingDocId === docId) {
+      console.log('Analysis already in progress for this document')
+      return
+    }
+
+    try {
+      setAnalyzingDocId(docId)
+      
+      // Update status immediately in UI for instant feedback
+      setDocuments(prevDocs => 
+        prevDocs.map(doc => 
+          doc.id === docId 
+            ? { ...doc, status: 'processing' as const }
+            : doc
+        )
+      )
+      
+      console.log('Starting analysis for document:', docId)
+      
+      // Get session for authentication
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) {
+        console.error('Session error:', sessionError)
+        // Revert status on error
+        setDocuments(prevDocs => 
+          prevDocs.map(doc => 
+            doc.id === docId 
+              ? { ...doc, status: 'error' as const }
+              : doc
+          )
+        )
+        throw new Error('Failed to get session')
+      }
+      
+      if (!session?.access_token) {
+        console.error('No access token found')
+        // Revert status on error
+        setDocuments(prevDocs => 
+          prevDocs.map(doc => 
+            doc.id === docId 
+              ? { ...doc, status: 'error' as const }
+              : doc
+          )
+        )
+        throw new Error('User not authenticated')
+      }
+
+      // Call backend API to analyze document
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      console.log('Calling backend:', `${backendUrl}/analyze`)
+      
+      const response = await fetch(`${backendUrl}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          document_id: docId
+        })
+      })
+
+      console.log('Response status:', response.status)
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        console.error('Backend error:', errorData)
+        // Revert status on error
+        setDocuments(prevDocs => 
+          prevDocs.map(doc => 
+            doc.id === docId 
+              ? { ...doc, status: 'error' as const, error_message: errorData.detail || 'Analysis failed' }
+              : doc
+          )
+        )
+        throw new Error(errorData.detail || `Failed to start analysis: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      console.log('Analysis started successfully:', result)
+
+      // Reload documents list after a short delay to get the real status from backend
+      setTimeout(() => {
+        loadDocuments()
+        setAnalyzingDocId(null)
+      }, 1000)
+    } catch (error: any) {
+      console.error('Error starting analysis:', error)
+      setAnalyzingDocId(null)
+      // Status already reverted to error above
+      alert(error.message || 'Failed to start analysis. Please try again.')
+    }
+  }, [loadDocuments, analyzingDocId])
 
   const deleteDocument = useCallback(async (docId: string, fileUrl: string) => {
     if (!confirm('Are you sure you want to delete this statement? This action cannot be undone.')) {
@@ -273,33 +369,64 @@ export default function DocumentsPage() {
                         </div>
                       </div>
                     </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          {getStatusIcon(doc.status)}
-                          <span className="text-xs text-muted-foreground">
-                            {getStatusText(doc.status)}
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-2">
+                    <CardContent className="space-y-3">
+                      <div className="flex items-center space-x-2 transition-all duration-300">
+                        {getStatusIcon(doc.status)}
+                        <span className={`text-xs transition-colors duration-300 ${
+                          doc.status === 'processing' 
+                            ? 'text-blue-600 font-medium' 
+                            : doc.status === 'done' 
+                            ? 'text-green-600' 
+                            : doc.status === 'error' 
+                            ? 'text-red-600' 
+                            : 'text-muted-foreground'
+                        }`}>
+                          {getStatusText(doc.status)}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {doc.status !== 'processing' && (
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => openPdfViewer(doc)}
+                            onClick={() => {
+                              console.log('Button clicked for document:', doc.id, 'Status:', doc.status)
+                              analyzeDocument(doc.id)
+                            }}
                             className="h-8"
+                            disabled={analyzingDocId === doc.id}
+                            title={doc.status === 'done' ? 'Re-analyze document' : 'Analyze document'}
                           >
-                            <Eye className="h-3 w-3 mr-1" />
-                            View
+                            {analyzingDocId === doc.id ? (
+                              <>
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                Starting...
+                              </>
+                            ) : (
+                              <>
+                                <Play className="h-3 w-3 mr-1" />
+                                {doc.status === 'done' ? 'Re-analyze' : 'Analyze'}
+                              </>
+                            )}
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => deleteDocument(doc.id, doc.file_url)}
-                            className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openPdfViewer(doc)}
+                          className="h-8"
+                        >
+                          <Eye className="h-3 w-3 mr-1" />
+                          View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => deleteDocument(doc.id, doc.file_url)}
+                          className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

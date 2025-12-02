@@ -90,30 +90,8 @@ export function UploadStatement({ onUploadSuccess }: UploadStatementProps) {
 
       if (dbError) throw dbError
 
-      // Trigger async analysis via backend API
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.access_token) {
-          const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-          // Fire and forget - don't wait for response
-          fetch(`${backendUrl}/analyze`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              document_id: documentId
-            })
-          }).catch(error => {
-            console.error('Error triggering analysis:', error)
-            // Don't fail the upload if analysis trigger fails
-          })
-        }
-      } catch (error) {
-        console.error('Error triggering analysis:', error)
-        // Don't fail the upload if analysis trigger fails
-      }
+      // Note: Analysis is now triggered manually via the "Analyze" button
+      // No automatic analysis after upload
 
       setSuccess(true)
       
