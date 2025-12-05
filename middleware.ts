@@ -27,7 +27,13 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  return new NextResponse('Invalid credentials', { status: 401 })
+  // Invalid credentials - return 401 with WWW-Authenticate header to show popup again
+  return new NextResponse('Invalid credentials', {
+    status: 401,
+    headers: {
+      'WWW-Authenticate': 'Basic realm="Protected Area"',
+    },
+  })
 }
 
 export const config = {
