@@ -27,10 +27,16 @@ export default function RegisterPage() {
     setSuccess(false)
 
     try {
+      // Get the current origin (production URL or localhost for dev)
+      const redirectUrl = typeof window !== 'undefined' 
+        ? `${window.location.origin}/auth/callback`
+        : '/auth/callback'
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
+          emailRedirectTo: redirectUrl,
           data: {
             company_name: companyName,
           },
